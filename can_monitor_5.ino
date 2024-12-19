@@ -10,9 +10,9 @@ const int CAN_INT_PIN = 2;
 const int SD_CS_PIN = 4;
 
 // CAN Bus configuration
-#define CAN_ID_MODE     0x00          // Standard CAN frame
-#define CAN_SPEED      500E3          // 500kbps
-#define CAN_CLOCK      0x00          // 16MHz oscillator
+//#define CAN_ID_MODE     0x00          // Standard CAN frame
+//#define CAN_SPEED      500E3          // 500kbps
+//#define CAN_CLOCK      0x00          // 16MHz oscillator
 
 // Initialize CAN Bus object
 MCP_CAN CAN(SPI_CS_PIN);
@@ -51,8 +51,8 @@ void setup() {
     
     // Initialize CAN Bus with proper parameters
     Serial.print("Initializing CAN Bus...");
-    //byte result = CAN.begin(CAN_ID_MODE, CAN_SPEED, CAN_CLOCK);
-    //byte result = CAN.begin(CAN_SPEED);
+    // Initialize MCP2515 running at 16MHz with a baudrate of 500kb/s and the masks and filters disabled.
+    byte result = CAN.begin(MCP_ANY, CAN_500KBPS, MCP_16MHZ);
     if (result == 0) {
         Serial.println("Success!");
     } else {
