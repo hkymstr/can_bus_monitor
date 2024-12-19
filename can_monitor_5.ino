@@ -11,7 +11,7 @@ const int SD_CS_PIN = 4;
 
 // CAN Bus configuration
 #define CAN_ID_MODE     0x00          // Standard CAN frame
-#define CAN_SPEED      0x00          // 500kbps
+#define CAN_SPEED      500E3          // 500kbps
 #define CAN_CLOCK      0x00          // 16MHz oscillator
 
 // Initialize CAN Bus object
@@ -51,7 +51,8 @@ void setup() {
     
     // Initialize CAN Bus with proper parameters
     Serial.print("Initializing CAN Bus...");
-    byte result = CAN.begin(CAN_ID_MODE, CAN_SPEED, CAN_CLOCK);
+    //byte result = CAN.begin(CAN_ID_MODE, CAN_SPEED, CAN_CLOCK);
+    //byte result = CAN.begin(CAN_SPEED);
     if (result == 0) {
         Serial.println("Success!");
     } else {
