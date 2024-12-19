@@ -7,7 +7,7 @@ const int SPI_CS_PIN = 10;
 const int CAN_INT_PIN = 2;
 
 // SD card pin
-const int SD_CS_PIN = 4;
+const int SD_CS_PIN = 9;
 
 // Filename for logging
 const char* LOG_FILENAME = "canlog.txt";
@@ -28,6 +28,10 @@ String formatCANMessage(unsigned long id, unsigned char len, unsigned char *buf,
 void logToSD(String message);
 
 void setup() {
+     //Initialize pins as necessary
+      pinMode(SD_CS_PIN, OUTPUT);
+    
+    
     // Initialize serial communication and wait for port to open
     Serial.begin(115200);
     delay(2000);  // Give serial port time to connect
@@ -49,6 +53,7 @@ void setup() {
     } else {
         Serial.println("Success!");
         sdCardPresent = true;
+        delay(1500);
         
         // Create header in log file if it's new
         if (!SD.exists(LOG_FILENAME)) {
