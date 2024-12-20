@@ -13,6 +13,14 @@ const int button_down = 26;
 const int button_left = 25;
 const int button_right = 28;
 
+//joy stick variable
+int joystick_center = 1;
+int joystick_up = 1;
+int joystick_down = 1;
+int joystick_left = 1;
+int joystick_right = 1;
+
+
 // SD card pin
 const int SD_CS_PIN = 9;
 
@@ -100,7 +108,16 @@ void setup() {
 }
 
 void loop() {
-    // Check for incoming CAN messages
+    
+     //read the state of the joystick
+     
+     int joystick_center = digitalRead(button_center);
+     int joystick_up = digitalRead(button_up);
+     int joystick_down = digitalRead(button_down);
+     int joystick_left = digitalRead(button_left);
+     int joystick_right = digitalRead(button_right);
+     
+     // Check for incoming CAN messages
     if (!digitalRead(CAN_INT_PIN)) {
         receiveCANMessage();
     }
