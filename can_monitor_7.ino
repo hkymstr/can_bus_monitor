@@ -6,6 +6,13 @@
 const int SPI_CS_PIN = 10;
 const int CAN_INT_PIN = 2;
 
+// Joystick buttons
+const int button_center = 27;
+const int button_up = 24;
+const int button_down = 26;
+const int button_left = 25;
+const int button_right = 28;
+
 // SD card pin
 const int SD_CS_PIN = 9;
 
@@ -110,6 +117,27 @@ void loop() {
             inputString += inChar;
         }
     }
+
+     if (!button_center) {
+          Serial.println("\nCenter");
+          logFile.println("Center");
+     }
+
+     if (!button_left) {
+          Serial.println("\nLeft");
+          logFile.println("Left");
+     }
+
+      if (!button_right) {
+          Serial.println("\nRight");
+          logFile.println("Right");
+     }
+
+     if (!button_down) {
+          Serial.println("\nDown");
+          logFile.println("Down");
+     }
+          
 }
 
 void logToSD(String message) {
