@@ -27,6 +27,7 @@ void setup()
   pinMode(SD_CS_PIN, OUTPUT);
   pinMode(CAN0_INT, INPUT);
   
+  // Set both CS pins high initially
   digitalWrite(CAN0_CS_PIN, HIGH);
   digitalWrite(SD_CS_PIN, HIGH);
   
@@ -37,8 +38,24 @@ void setup()
   // Initialize SPI
   SPI.begin();
   
+  // Initialize CAN first
+  Serial.print("Initializing CAN controller...");
+  digitalWrite(CAN0_CS_PIN, LOW);  // Select CAN
+  digitalWrite(SD_CS_PIN, HIGH);   // Deselect SD
+  
+  if(CAN0.begin(MCP_ANY, CAN_500KBPS, MCP_16MHZ) == CAN_OK) {
+    Serial.println("OK!");
+  } else {
+    Serial.println("Failed!");
+    while(1); // CAN failure is critical
+  }
+  
+  CAN0.setMode(MCP_NORMAL);   // Set operation mode to normal
+  digitalWrite(CAN0_CS_PIN, HIGH);  // Deselect CAN
+  
   // Try to initialize SD Card
   Serial.print("Initializing SD card...");
+  digitalWrite(SD_CS_PIN, LOW);   // Select SD
   if (SD.begin(SD_CS_PIN)) {
     Serial.println("OK!");
     sdCardPresent = true;
@@ -65,17 +82,10 @@ void setup()
     Serial.println("Failed! Operating in Serial-only mode");
     sdCardPresent = false;
   }
+  digitalWrite(SD_CS_PIN, HIGH);  // Deselect SD
   
-  // Initialize MCP2515 running at 16MHz with a baudrate of 500kb/s
-  Serial.print("Initializing CAN controller...");
-  if(CAN0.begin(MCP_ANY, CAN_500KBPS, MCP_16MHZ) == CAN_OK) {
-    Serial.println("OK!");
-  } else {
-    Serial.println("Failed!");
-    while(1); // CAN failure is critical, so we still halt here
-  }
-  
-  CAN0.setMode(MCP_NORMAL);   // Set operation mode to normal so the MCP2515 sends acks to received data.
+  // Re-select CAN for normal operation
+  digitalWrite(CAN0_CS_PIN, LOW);
   
   // Final status message
   if (!sdCardPresent) {
@@ -87,7 +97,9 @@ void setup()
 void logToSD(unsigned long timestamp, String msgType) {
   if (!sdCardPresent) return;  // Skip if SD card is not available
   
-  digitalWrite(CAN0_CS_PIN, HIGH);  // Disable CAN
+  // Switch from CAN to SD card
+  digitalWrite(CAN0_CS_PIN, HIGH);  // Deselect CAN
+  digitalWrite(SD_CS_PIN, LOW);     // Select SD
   
   File logFile = SD.open(activeLogFile.c_str(), FILE_WRITE);
   if (logFile) {
@@ -117,7 +129,9 @@ void logToSD(unsigned long timestamp, String msgType) {
     sdCardPresent = false;
   }
   
-  digitalWrite(CAN0_CS_PIN, LOW);  // Re-enable CAN
+  // Switch back to CAN
+  digitalWrite(SD_CS_PIN, HIGH);    // Deselect SD
+  digitalWrite(CAN0_CS_PIN, LOW);   // Select CAN
 }
 
 void loop()
@@ -160,6 +174,11 @@ void loop()
   static unsigned long lastSDCheck = 0;
   if (!sdCardPresent && (millis() - lastSDCheck > 5000)) {  // Check every 5 seconds
     lastSDCheck = millis();
+    
+    // Switch to SD card
+    digitalWrite(CAN0_CS_PIN, HIGH);  // Deselect CAN
+    digitalWrite(SD_CS_PIN, LOW);     // Select SD
+    
     if (SD.begin(SD_CS_PIN)) {
       Serial.println("SD card detected! Resuming logging...");
       sdCardPresent = true;
@@ -183,5 +202,9 @@ void loop()
         logFile.close();
       }
     }
+    
+    // Switch back to CAN
+    digitalWrite(SD_CS_PIN, HIGH);    // Deselect SD
+    digitalWrite(CAN0_CS_PIN, LOW);   // Select CAN
   }
 }
