@@ -3,159 +3,154 @@
 #include <SD.h>
 
 // Pin definitions
-const int CAN0_CS_PIN = 10;    // Set CS to pin 10
-const int SD_CS_PIN = 9;       // SD card CS pin
-const int CAN0_INT = 2;        // Set INT to pin 2
+const int CAN0_CS_PIN = 10;
+const int SD_CS_PIN = 9;
+const int CAN0_INT = 2;
 
 // Global variables
 long unsigned int rxId;
 unsigned char len = 0;
 unsigned char rxBuf[8];
-char msgString[128];           // Array to store serial string
+char msgString[128];
+char filename[13];  // Changed to array for dynamic naming
 
-// Initialize CAN Bus object
 MCP_CAN CAN0(CAN0_CS_PIN);
-
-// Active log filename and SD card status
-String activeLogFile;
 bool sdCardPresent = false;
-File logFile;  // Keep file object global
 
-void initializeSPI() {
-    digitalWrite(CAN0_CS_PIN, HIGH);  // Deselect CAN
-    digitalWrite(SD_CS_PIN, HIGH);    // Deselect SD
-    SPI.begin();
-    delay(100);
+// Find next available filename
+void getNextFilename() {
+    int fileNum = 0;
+    do {
+        fileNum++;
+        sprintf(filename, "CAN%03d.txt", fileNum);
+    } while (SD.exists(filename) && fileNum < 999);
+    Serial.print("Using filename: ");
+    Serial.println(filename);
 }
 
-void initializeSD() {
-    digitalWrite(CAN0_CS_PIN, HIGH);  // Ensure CAN is deselected
-    if (SD.begin(SD_CS_PIN)) {
-        sdCardPresent = true;
-        Serial.println("SD card initialized successfully!");
-        
-        // Find next available filename
-        char filename[13];
-        int fileNum = 0;
-        do {
-            fileNum++;
-            sprintf(filename, "CAN%03d.TXT", fileNum);
-        } while (SD.exists(filename) && fileNum < 999);
-        
-        activeLogFile = String(filename);
-        Serial.print("Logging to: ");
-        Serial.println(activeLogFile);
-        
-        // Create and leave file open for writing
-        logFile = SD.open(activeLogFile.c_str(), FILE_WRITE);
-        if (logFile) {
-            logFile.println("Time,ID,Length,Data,Type");
-            logFile.flush();  // Ensure header is written
-        } else {
-            Serial.println("Failed to open log file!");
-            sdCardPresent = false;
-        }
+void initSD() {
+    digitalWrite(CAN0_CS_PIN, HIGH);
+    delay(10);
+    
+    if (!SD.begin(SD_CS_PIN)) {
+        Serial.println("SD Init Failed!");
+        sdCardPresent = false;
     } else {
-        Serial.println("SD card initialization failed!");
+        sdCardPresent = true;
+        Serial.println("SD Init Success!");
+        
+        // Get next available filename
+        getNextFilename();
+        
+        // Create new log file with header
+        File logFile = SD.open(filename, FILE_WRITE);
+        if (logFile) {
+            logFile.println("Timestamp,ID Type,ID,DLC,Data");
+            logFile.close();
+            Serial.println("Log file created");
+        }
+    }
+    
+    digitalWrite(SD_CS_PIN, HIGH);
+    SD.end();
+    
+    digitalWrite(CAN0_CS_PIN, LOW);
+    delay(10);
+}
+
+void writeToSD(String dataString) {
+    if (!sdCardPresent) return;
+    
+    digitalWrite(CAN0_CS_PIN, HIGH);
+    delay(10);
+    
+    if (SD.begin(SD_CS_PIN)) {
+        File logFile = SD.open(filename, FILE_WRITE);
+        if (logFile) {
+            logFile.println(dataString);
+            logFile.close();
+            Serial.println("Data logged");
+        }
+        
+        digitalWrite(SD_CS_PIN, HIGH);
+        SD.end();
+    } else {
+        Serial.println("SD Write Failed!");
         sdCardPresent = false;
     }
+    
+    digitalWrite(CAN0_CS_PIN, LOW);
+    delay(10);
 }
 
 void setup() {
-    // Initialize pins
+    Serial.begin(115200);
+    delay(1000);
+    
     pinMode(CAN0_CS_PIN, OUTPUT);
     pinMode(SD_CS_PIN, OUTPUT);
     pinMode(CAN0_INT, INPUT);
     
-    Serial.begin(115200);
-    delay(1000);
-    Serial.println("CAN Bus Logger with SD Card Storage");
+    digitalWrite(CAN0_CS_PIN, HIGH);
+    digitalWrite(SD_CS_PIN, HIGH);
     
-    // Initialize SPI bus
-    initializeSPI();
+    SPI.begin();
+    delay(100);
     
-    // Initialize CAN
-    Serial.print("Initializing CAN controller...");
+    Serial.print("Initializing CAN...");
+    digitalWrite(CAN0_CS_PIN, LOW);
     if(CAN0.begin(MCP_ANY, CAN_500KBPS, MCP_16MHZ) == CAN_OK) {
-        Serial.println("OK!");
+        Serial.println("Success!");
     } else {
         Serial.println("Failed!");
         while(1);
     }
     CAN0.setMode(MCP_NORMAL);
     
-    // Initialize SD Card
-    Serial.print("Initializing SD card...");
-    initializeSD();
-    
-    if (!sdCardPresent) {
-        Serial.println("WARNING: Operating without SD card logging");
-    }
-}
-
-void logCANMessage(unsigned long timestamp, String msgType) {
-    if (!sdCardPresent || !logFile) return;
-    
-    // Format the log entry first
-    String logEntry = String(timestamp) + ",0x" +
-                     String(rxId & 0x1FFFFFFF, HEX) + "," +
-                     String(len) + ",";
-    
-    if((rxId & 0x40000000) == 0x40000000) {
-        logEntry += "REMOTE";
-    } else {
-        for(byte i = 0; i < len; i++) {
-            if(rxBuf[i] < 0x10) logEntry += "0";
-            logEntry += String(rxBuf[i], HEX);
-            if(i < len-1) logEntry += " ";
-        }
-    }
-    logEntry += "," + msgType + "\n";
-    
-    // Write to SD
-    logFile.print(logEntry);
-    logFile.flush();  // Ensure data is written
+    initSD();
 }
 
 void loop() {
-    if(!digitalRead(CAN0_INT)) {  // If CAN0_INT pin is low, read receive buffer
-        CAN0.readMsgBuf(&rxId, &len, rxBuf);  // Read data
-        unsigned long timestamp = millis();
+    if(!digitalRead(CAN0_INT)) {
+        CAN0.readMsgBuf(&rxId, &len, rxBuf);
         
-        // Process and display the message
-        String msgType;
+        // Determine message type and format
+        String idType;
+        String idString;
+        
         if((rxId & 0x80000000) == 0x80000000) {
-            sprintf(msgString, "Extended ID: 0x%.8lX  DLC: %1d  Data:", (rxId & 0x1FFFFFFF), len);
-            msgType = "Extended";
+            idType = "Extended";
+            idString = String((rxId & 0x1FFFFFFF), HEX);
         } else {
-            sprintf(msgString, "Standard ID: 0x%.3lX       DLC: %1d  Data:", rxId, len);
-            msgType = "Standard";
+            idType = "Standard";
+            idString = String(rxId, HEX);
         }
         
-        Serial.print(msgString);
-        
-        if((rxId & 0x40000000) == 0x40000000) {
-            sprintf(msgString, " REMOTE REQUEST FRAME");
-            Serial.print(msgString);
-            msgType = "Remote";
-        } else {
-            for(byte i = 0; i<len; i++){
-                sprintf(msgString, " 0x%.2X", rxBuf[i]);
-                Serial.print(msgString);
-            }
+        // Format data bytes
+        String dataBytes = "";
+        for(byte i = 0; i < len; i++) {
+            if(rxBuf[i] < 0x10) dataBytes += "0";
+            dataBytes += String(rxBuf[i], HEX);
+            if(i < (len - 1)) dataBytes += " ";
         }
-        Serial.println();
         
-        // Log to SD if available
-        if (sdCardPresent) {
-            logCANMessage(timestamp, msgType);
-        }
-    }
-    
-    // Check for SD card much less frequently (every 30 seconds)
-    static unsigned long lastSDCheck = 0;
-    if (!sdCardPresent && (millis() - lastSDCheck > 30000)) {
-        lastSDCheck = millis();
-        initializeSD();
+        // Create formatted strings for display and logging
+        String displayString = idType + " ID: 0x" + idString + 
+                             "  DLC: " + String(len) + 
+                             "  Data: " + dataBytes;
+                             
+        String logString = String(millis()) + "," +
+                          idType + "," +
+                          "0x" + idString + "," +
+                          String(len) + "," +
+                          dataBytes;
+        
+        // Print to serial with clear formatting
+        Serial.println("----------------------------------------");
+        Serial.println(displayString);
+        Serial.println("----------------------------------------");
+        
+        // Write to SD
+        writeToSD(logString);
     }
 }
