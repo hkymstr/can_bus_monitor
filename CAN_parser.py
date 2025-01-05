@@ -4,6 +4,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import numpy as np
+from io import StringIO
+
 
 class CANViewer(tk.Tk):
     def __init__(self):
@@ -14,12 +16,14 @@ class CANViewer(tk.Tk):
 
         # Data storage
         self.data = None
+        self.action_events = []  # Store action events
         self.unique_ids = []
         self.id_vars = {}  # Store checkbutton variables
         self.byte_vars = {}  # Store byte selection variables
         self.current_file = None
         self.selected_byte = tk.IntVar(value=0)  # Default to first byte
-        self.show_all_bytes = tk.BooleanVar(value=False)  # Toggle for showing all bytes
+        self.show_all_bytes = tk.BooleanVar(value=False)  # Toggle for showing combined value
+        self.show_actions = tk.BooleanVar(value=True)  # Toggle for showing action lines
 
         # Create main menu
         self.menu_bar = tk.Menu(self)
@@ -71,17 +75,25 @@ class CANViewer(tk.Tk):
         ttk.Button(select_frame, text="Select All", command=self.select_all_ids).pack(side=tk.LEFT, padx=2)
         ttk.Button(select_frame, text="Deselect All", command=self.deselect_all_ids).pack(side=tk.LEFT, padx=2)
 
-        # Add byte selection
-        byte_frame = ttk.LabelFrame(left_panel, text="Byte Selection")
+        # Add byte selection frame
+        byte_frame = ttk.LabelFrame(left_panel, text="Display Options")
         byte_frame.pack(fill=tk.X, pady=5)
 
-        # Add "Show All Bytes" checkbox
+        # Add "Show Combined Value" checkbox
         ttk.Checkbutton(
             byte_frame,
-            text="Show All Bytes",
+            text="Show Combined Value",
             variable=self.show_all_bytes,
             command=self.update_plot
         ).grid(row=0, column=0, columnspan=2, padx=5, pady=5)
+
+        # Add "Show Actions" checkbox
+        ttk.Checkbutton(
+            byte_frame,
+            text="Show Action Events",
+            variable=self.show_actions,
+            command=self.update_plot
+        ).grid(row=1, column=0, columnspan=2, padx=5, pady=5)
 
         # Add radio buttons for byte selection
         self.byte_radios = []
@@ -93,14 +105,15 @@ class CANViewer(tk.Tk):
                 value=i,
                 command=self.update_plot
             )
-            radio.grid(row=1, column=i, padx=2)
+            radio.grid(row=2, column=i, padx=2)
 
         # Create right panel for plot
         self.right_panel = ttk.Frame(main_container)
         main_container.add(self.right_panel, weight=3)
 
-        # Initialize empty plot
+        # Initialize empty plot with fixed dimensions
         self.fig = plt.figure(figsize=(10, 6))
+        self.fig.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.right_panel)
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
@@ -108,6 +121,18 @@ class CANViewer(tk.Tk):
         # Add matplotlib toolbar
         self.toolbar = NavigationToolbar2Tk(self.canvas, self.right_panel)
         self.toolbar.update()
+
+    def select_all_ids(self):
+        """Select all CAN IDs"""
+        for var in self.id_vars.values():
+            var.set(True)
+        self.update_plot()
+
+    def deselect_all_ids(self):
+        """Deselect all CAN IDs"""
+        for var in self.id_vars.values():
+            var.set(False)
+        self.update_plot()
 
     def load_file(self):
         filename = filedialog.askopenfilename(
@@ -119,11 +144,54 @@ class CANViewer(tk.Tk):
 
     def load_data(self, filename):
         try:
-            df = pd.read_csv(filename)
-            self.data = df
+            # Read the full file content
+            with open(filename, 'r') as file:
+                lines = file.readlines()
+
+            # Separate CAN data and action events
+            can_data = []
+            action_events = []
+            headers = lines[0].strip()  # Save headers
+            can_data.append(headers)  # Add headers to CAN data
+
+            for line in lines[1:]:  # Skip header line
+                if 'Action' in line:
+                    # Parse action event - format is: Timestamp,,,,,Action X
+                    parts = line.strip().split(',')
+                    try:
+                        timestamp = float(parts[0])  # Get timestamp from first column
+                        action_str = parts[-1].strip()  # Get action from last column
+                        action_num = int(action_str.split()[-1])  # Get number after "Action"
+                        action_events.append((timestamp, action_num))
+                    except (ValueError, IndexError) as e:
+                        print(f"Failed to parse action: {line.strip()} - {str(e)}")
+                        continue
+                else:
+                    can_data.append(line)
+
+            # Store action events
+            self.action_events = sorted(action_events, key=lambda x: x[0])
+
+            # Parse CAN data directly from list of strings
+            # Convert can_data list to data frame
+            headers = can_data[0].strip().split(',')
+            data_rows = [row.strip().split(',') for row in can_data[1:]]
+            self.data = pd.DataFrame(data_rows, columns=headers)
+
+            # Convert hex ID strings to integers
+            self.data['ID'] = self.data['ID'].apply(
+                lambda x: int(x, 16) if isinstance(x, str) and x.startswith('0x') else int(x))
+            # Convert Timestamp to float
+            self.data['Timestamp'] = self.data['Timestamp'].astype(float)
+
+            # Normalize timestamps to start from 0 if needed
+            min_timestamp = min(self.data['Timestamp'].min(),
+                                min(t for t, _ in action_events) if action_events else float('inf'))
+            self.data['Timestamp'] = self.data['Timestamp'] - min_timestamp
+            self.action_events = [(t - min_timestamp, n) for t, n in action_events]
 
             # Get unique CAN IDs
-            self.unique_ids = sorted(df['ID'].unique())
+            self.unique_ids = sorted(self.data['ID'].unique())
 
             # Clear existing checkbuttons
             for widget in self.scrollable_frame.winfo_children():
@@ -140,13 +208,13 @@ class CANViewer(tk.Tk):
                 # Add checkbutton
                 ttk.Checkbutton(
                     frame,
-                    text=str(can_id),
+                    text=f"0x{can_id:03X}",  # Format as hex
                     variable=var,
                     command=self.update_plot
                 ).pack(side=tk.LEFT)
 
                 # Add message count label
-                count = len(df[df['ID'] == can_id])
+                count = len(self.data[self.data['ID'] == can_id])
                 ttk.Label(frame, text=f"({count} msgs)").pack(side=tk.LEFT)
 
             self.update_plot()
@@ -154,28 +222,15 @@ class CANViewer(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load file: {str(e)}")
 
-    def select_all_ids(self):
-        for var in self.id_vars.values():
-            var.set(True)
-        self.update_plot()
-
-    def deselect_all_ids(self):
-        for var in self.id_vars.values():
-            var.set(False)
-        self.update_plot()
-
     def get_byte_value(self, data_str, byte_index):
-        # Split the hex string and get the specified byte
         bytes_list = data_str.split()
         if byte_index < len(bytes_list):
             return int(bytes_list[byte_index], 16)
         return None
 
     def get_combined_value(self, data_str):
-        # Combine all bytes into a single value
         bytes_list = data_str.split()
         try:
-            # Convert each byte to integer and combine them
             combined_value = 0
             for i, byte in enumerate(bytes_list):
                 combined_value |= (int(byte, 16) << (8 * (len(bytes_list) - 1 - i)))
@@ -201,14 +256,13 @@ class CANViewer(tk.Tk):
                     valid_data = [(t, v) for t, v in zip(timestamps, values) if v is not None]
                     if valid_data:
                         t, v = zip(*valid_data)
-                        ax.plot(t, v, label=f'ID:{can_id}', linewidth=1, marker='.', markersize=2)
+                        ax.plot(t, v, label=f'ID:0x{can_id:03X}', linewidth=1, marker='.', markersize=2)
 
-            ax.set_xlabel('Time (ms)')
             ax.set_ylabel('Combined Value')
             ax.set_title('CAN Bus Data - Combined Bytes')
 
         else:
-            # Single byte view (original code)
+            # Single byte view
             byte_idx = self.selected_byte.get()
 
             for can_id in self.unique_ids:
@@ -219,25 +273,36 @@ class CANViewer(tk.Tk):
                     valid_data = [(t, v) for t, v in zip(timestamps, values) if v is not None]
                     if valid_data:
                         t, v = zip(*valid_data)
-                        ax.plot(t, v, label=str(can_id), linewidth=1, marker='.', markersize=2)
+                        ax.plot(t, v, label=f'ID:0x{can_id:03X}', linewidth=1, marker='.', markersize=2)
 
-            ax.set_xlabel('Time (ms)')
             ax.set_ylabel(f'Byte {byte_idx} Value')
             ax.set_title(f'CAN Bus Data - Byte {byte_idx}')
 
+        # Add action events as vertical lines
+        if self.show_actions.get() and self.action_events:
+            ymin, ymax = ax.get_ylim()
+            for timestamp, action_num in self.action_events:
+                # Draw a more visible vertical line
+                line = ax.axvline(x=timestamp, color='red', linestyle='-', alpha=0.7, linewidth=2)
+                # Add action number label at the top
+                ax.text(timestamp, ymax, f'Action {action_num}',
+                        rotation=90, verticalalignment='bottom',
+                        color='red', fontsize=10, weight='bold',
+                        backgroundcolor='white')
+
+        ax.set_xlabel('Time (ms)')
         ax.grid(True)
 
         # Add legend with better positioning
         if len(ax.get_legend_handles_labels()[0]) > 15:
-            # If many legend items, place it to the right of the plot
             ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-            self.fig.subplots_adjust(right=0.85)  # Make room for legend
+            self.fig.subplots_adjust(right=0.85)
         else:
-            # If few legend items, place it inside the plot
             ax.legend(loc='best')
 
         self.fig.tight_layout()
         self.canvas.draw()
+
 
 if __name__ == "__main__":
     app = CANViewer()
