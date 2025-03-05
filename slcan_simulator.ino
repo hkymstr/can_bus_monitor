@@ -100,7 +100,7 @@ void sendRandomCanFrame() {
   uint32_t canId = CAN_IDS[random(NUM_IDS)];
   
   // Generate random data length (1-8 bytes)
-  uint8_t dataLength = random(1, 9);
+  uint8_t dataLength = 8;
   
   // Generate random data
   uint8_t data[8];
